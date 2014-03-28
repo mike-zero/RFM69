@@ -166,7 +166,7 @@ void RFM69::send(byte toAddress, const void* buffer, byte bufferSize, bool reque
 // to increase the chance of getting a packet across, call this function instead of send
 // and it handles all the ACK requesting/retrying for you :)
 // The only twist is that you have to manually listen to ACK requests on the other side and send back the ACKs
-// The reason for the semi-automaton is that the lib is ingterrupt driven and
+// The reason for the semi-automaton is that the lib is interrupt driven and
 // requires user action to read the received data and decide what to do with it
 // replies usually take only 5-8ms at 50kbps@915Mhz
 bool RFM69::sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, byte retries, byte retryWaitTime) {
@@ -214,7 +214,7 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	SPI.transfer(REG_FIFO | 0x80);
 	SPI.transfer(bufferSize + 3);
 	SPI.transfer(toAddress);
-  SPI.transfer(_address);
+	SPI.transfer(_address);
   
   //control byte
   if (sendACK)
