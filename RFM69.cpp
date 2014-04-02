@@ -93,9 +93,17 @@ bool RFM69::initialize(uint32_t frequency, byte nodeID, byte networkID, byte pow
 
 void RFM69::setFrequency(uint32_t FRF)
 {
+  byte _mode_save = _mode;	// Try to respect the datasheet (4.2.5. Optimized Frequency Hopping Sequences)
+  if (_mode_save == RF69_MODE_TX) {
+	setMode(RF69_MODE_RX);
+  }
   writeReg(REG_FRFMSB, FRF >> 16);
   writeReg(REG_FRFMID, FRF >> 8);
   writeReg(REG_FRFLSB, FRF);
+  if (_mode_save == RF69_MODE_RX) {
+	setMode(RF69_MODE_SYNTH);
+  }
+  setMode(_mode_save);
 }
 
 void RFM69::setMode(byte newMode)
