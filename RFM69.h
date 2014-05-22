@@ -13,7 +13,7 @@
 #define MAX_DATA_LEN         61 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead)
 #define SPI_CS               SS // SS is the SPI slave select pin, for instance D10 on atmega328
 #define RF69_IRQ_PIN          2 // INT0 on AVRs should be connected to DIO0 (ex on Atmega328 it's D2)
-#define CSMA_LIMIT          -90 // upper RX signal sensitivity threshold in dBm for carrier sense access
+#define CSMA_LIMIT          -40 // upper RX signal sensitivity threshold in dBm for carrier sense access
 #define RF69_MODE_SLEEP       0 // XTAL OFF
 #define	RF69_MODE_STANDBY     1 // XTAL ON
 #define RF69_MODE_SYNTH	      2 // PLL ON
@@ -30,6 +30,9 @@
 #define COURSE_TEMP_COEF    -90 // puts the temperature reading in the ballpark, user can fine tune the returned value
 #define RF69_BROADCAST_ADDR 255
 
+#define ACK_REQUESTED_FLAG	0x40
+#define ACK_RECEIVED_FLAG	0x80;
+
 class RFM69 {
   public:
     static volatile byte DATA[MAX_DATA_LEN];          // recv/xmit buf, including hdr & crc bytes
@@ -39,7 +42,10 @@ class RFM69 {
     static volatile byte PAYLOADLEN;
     static volatile byte ACK_REQUESTED;
     static volatile byte ACK_RECEIVED; /// Should be polled immediately after sending a packet with ACK request
-    static volatile int RSSI; //most accurate RSSI during reception (closest to the reception)
+    static volatile byte RSSI; //most accurate RSSI during reception (closest to the reception)
+	static volatile byte TX_RSSI;
+	static volatile short FEI;
+	static volatile short AFC;
     static volatile byte _mode; //should be protected?
     
     RFM69(byte slaveSelectPin=SPI_CS, byte interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false) {
@@ -47,7 +53,7 @@ class RFM69 {
       _interruptPin = interruptPin;
       _mode = RF69_MODE_STANDBY;
       _promiscuousMode = false;
-      _powerLevel = 31;
+      _powerLevel = 0;
       _isRFM69HW = isRFM69HW;
     }
 
@@ -55,20 +61,22 @@ class RFM69 {
     void setAddress(byte addr);
     bool canSend();
     void send(byte toAddress, const void* buffer, byte bufferSize, bool requestACK=false);
-    bool sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, byte retries=2, byte retryWaitTime=30);
+    bool sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, byte retries=2, byte retryWaitTime=100);
     bool receiveDone();
     bool ACKReceived(byte fromNodeID);
     void sendACK(const void* buffer = "", uint8_t bufferSize=0);
     void setFrequency(uint32_t FRF);
     void encrypt(const char* key);
     void setCS(byte newSPISlaveSelect);
-    int readRSSI(bool forceTrigger=false);
+    byte readRSSI(bool forceTrigger=false);
     void promiscuous(bool onOff=true);
     void setHighPower(bool onOFF=true); //have to call it after initialize for RFM69HW
     void setPowerLevel(byte level); //reduce/increase transmit power level
     void sleep();
     byte readTemperature(byte calFactor=0); //get CMOS temperature (8bit)
     void rcCalibration(); //calibrate the internal RC oscillator for use in wide temperature variations - see datasheet section [4.3.5. RC Timer Accuracy]
+	short readFEI();
+	short readAFC();
 
     // allow hacking registers by making these public
     byte readReg(byte addr);

@@ -18,7 +18,10 @@ volatile byte RFM69::TARGETID; //should match _address
 volatile byte RFM69::PAYLOADLEN;
 volatile byte RFM69::ACK_REQUESTED;
 volatile byte RFM69::ACK_RECEIVED; /// Should be polled immediately after sending a packet with ACK request
-volatile int RFM69::RSSI; //most accurate RSSI during reception (closest to the reception)
+volatile byte RFM69::RSSI; //most accurate RSSI during reception (closest to the reception)
+volatile byte RFM69::TX_RSSI;
+volatile short RFM69::FEI;
+volatile short RFM69::AFC;
 RFM69* RFM69::selfPointer;
 
 bool RFM69::initialize(uint32_t frequency, byte nodeID, byte networkID, byte power)
@@ -26,15 +29,17 @@ bool RFM69::initialize(uint32_t frequency, byte nodeID, byte networkID, byte pow
   const byte CONFIG[][2] =
   {
     /* 0x01 */ { REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_OFF | RF_OPMODE_STANDBY },
-    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_00 }, //no shaping
-    /* 0x03 */ { REG_BITRATEMSB, RF_BITRATEMSB_12500}, //default:4.8 KBPS
-    /* 0x04 */ { REG_BITRATELSB, RF_BITRATELSB_12500},
+    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_10 },
+    /* 0x03 */ { REG_BITRATEMSB, RF_BITRATEMSB_4800}, //default:4.8 KBPS
+    /* 0x04 */ { REG_BITRATELSB, RF_BITRATELSB_4800},
     /* 0x05 */ { REG_FDEVMSB, RF_FDEVMSB_5000}, //default:5khz, (FDEV + BitRate/2 <= 500Khz)
     /* 0x06 */ { REG_FDEVLSB, RF_FDEVLSB_5000},
 
     // /* 0x07 */ { REG_FRFMSB, (freqBand==RF69_315MHZ ? RF_FRFMSB_315 : (freqBand==RF69_433MHZ ? RF_FRFMSB_433 : (freqBand==RF69_868MHZ ? RF_FRFMSB_868 : RF_FRFMSB_915))) },
     // /* 0x08 */ { REG_FRFMID, (freqBand==RF69_315MHZ ? RF_FRFMID_315 : (freqBand==RF69_433MHZ ? RF_FRFMID_433 : (freqBand==RF69_868MHZ ? RF_FRFMID_868 : RF_FRFMID_915))) },
     // /* 0x09 */ { REG_FRFLSB, (freqBand==RF69_315MHZ ? RF_FRFLSB_315 : (freqBand==RF69_433MHZ ? RF_FRFLSB_433 : (freqBand==RF69_868MHZ ? RF_FRFLSB_868 : RF_FRFLSB_915))) },
+
+    // /* 0x0B */ { REG_AFCCTRL, RF_AFCLOWBETA_OFF }, // m0, from https://github.com/UKHASnet/RFM69/blob/master/arduino/RFM69/RFM69Config.h
     
     // looks like PA1 and PA2 are not implemented on RFM69W, hence the max output power is 13dBm
     // +17dBm and +20dBm are possible on RFM69HW
@@ -47,18 +52,20 @@ bool RFM69::initialize(uint32_t frequency, byte nodeID, byte networkID, byte pow
     ///* 0x18*/ { REG_LNA,  RF_LNA_ZIN_200 | RF_LNA_CURRENTGAIN }, //as suggested by mav here: http://lowpowerlab.com/forum/index.php/topic,296.msg1571.html
     
     // RXBW defaults are { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_5} (RxBw: 10.4khz)
-    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_6 }, //(BitRate < 2 * RxBw)
-//    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_2 }, //(BitRate < 2 * RxBw)
-//    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_2 }, //(BitRate < 2 * RxBw)
+    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_5 }, //(BitRate < 2 * RxBw) // 10.4 kHz
+//    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_2 }, //(BitRate < 2 * RxBw) // 100 kHz
+//    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_2 }, //(BitRate < 2 * RxBw) // 125 kHz
+//    /* 0x1A */ { REG_AFCBW, RF_AFCBW_DCCFREQAFC_010 | RF_AFCBW_MANTAFC_20 | RF_AFCBW_EXPAFC_2 },
+//    /* 0x1E */ { REG_AFCFEI, RF_AFCFEI_AFCAUTO_OFF | RF_AFCFEI_AFCAUTOCLEAR_OFF },
     /* 0x25 */ { REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01 }, //DIO0 is the only IRQ we're using
     /* 0x29 */ { REG_RSSITHRESH, 220 }, //must be set to dBm = (-Sensitivity / 2) - default is 0xE4=228 so -114dBm
     ///* 0x2d */ { REG_PREAMBLELSB, RF_PREAMBLESIZE_LSB_VALUE } // default 3 preamble bytes 0xAAAAAA
     /* 0x2e */ { REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_2 | RF_SYNC_TOL_0 },
     /* 0x2f */ { REG_SYNCVALUE1, 0x2D },      //attempt to make this compatible with sync1 byte of RFM12B lib
     /* 0x30 */ { REG_SYNCVALUE2, networkID }, //NETWORK ID
-    /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON | RF_PACKET1_ADRSFILTERING_OFF },
+    /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON | RF_PACKET1_ADRSFILTERING_NODEBROADCAST },
     /* 0x38 */ { REG_PAYLOADLENGTH, 66 }, //in variable length mode: the max frame size, not used in TX
-    //* 0x39 */ { REG_NODEADRS, nodeID }, //turned off because we're not using address filtering
+    /* 0x39 */ { REG_NODEADRS, nodeID }, //turned off because we're not using address filtering
     /* 0x3C */ { REG_FIFOTHRESH, RF_FIFOTHRESH_TXSTART_FIFONOTEMPTY | RF_FIFOTHRESH_VALUE }, //TX on FIFO not empty
     /* 0x3d */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, //RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
     /* 0x6F */ { REG_TESTDAGC, RF_DAGC_IMPROVED_LOWBETA0 }, // run DAGC continuously in RX mode, recommended default for AfcLowBetaOn=0
@@ -160,7 +167,7 @@ void RFM69::setPowerLevel(byte powerLevel)
 
 bool RFM69::canSend()
 {
-  if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) //if signal stronger than -100dBm is detected assume channel activity
+  if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() > -2*CSMA_LIMIT) //if signal stronger than -100dBm is detected assume channel activity
   {
     setMode(RF69_MODE_STANDBY);
     return true;
@@ -191,7 +198,7 @@ bool RFM69::sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, b
     {
       if (ACKReceived(toAddress))
       {
-        //Serial.print(" ~ms:");Serial.print(millis()-sentTime);
+        Serial.print(" ~ms:");Serial.print(millis()-sentTime);
         return true;
       }
     }
@@ -216,6 +223,7 @@ void RFM69::sendACK(const void* buffer, byte bufferSize) {
 
 void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool requestACK, bool sendACK)
 {
+  byte control_byte = 0;
   setMode(RF69_MODE_STANDBY); //turn off receiver to prevent reception while filling fifo
 	while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // Wait for ModeReady
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
@@ -224,17 +232,18 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	//write to FIFO
 	select();
 	SPI.transfer(REG_FIFO | 0x80);
-	SPI.transfer(bufferSize + 3);
+	SPI.transfer(bufferSize + 4);
 	SPI.transfer(toAddress);
 	SPI.transfer(_address);
-  
+
   //control byte
   if (sendACK)
-    SPI.transfer(0x80);
+    control_byte |= ACK_RECEIVED_FLAG
   else if (requestACK)
-    SPI.transfer(0x40);
-  else SPI.transfer(0x00);
-  
+    control_byte |= ACK_REQUESTED_FLAG;
+  SPI.transfer(control_byte);
+  SPI.transfer(RSSI);	// TX_RSSI
+
 	for (byte i = 0; i < bufferSize; i++)
     SPI.transfer(((byte*)buffer)[i]);
 	unselect();
@@ -264,13 +273,15 @@ void RFM69::interruptHandler() {
       //digitalWrite(4, 0);
       return;
     }
-    DATALEN = PAYLOADLEN - 3;
+    DATALEN = PAYLOADLEN - 4;
     SENDERID = SPI.transfer(0);
     byte CTLbyte = SPI.transfer(0);
     
-    ACK_RECEIVED = CTLbyte & 0x80; //extract ACK-requested flag
-    ACK_REQUESTED = CTLbyte & 0x40; //extract ACK-received flag
-    
+    ACK_RECEIVED = CTLbyte & ACK_RECEIVED_FLAG; //extract ACK-requested flag
+    ACK_REQUESTED = CTLbyte & ACK_REQUESTED_FLAG; //extract ACK-received flag
+
+	TX_RSSI = SPI.transfer(0);
+
     for (byte i= 0; i < DATALEN; i++)
     {
       DATA[i] = SPI.transfer(0);
@@ -279,6 +290,8 @@ void RFM69::interruptHandler() {
     setMode(RF69_MODE_RX);
   }
   RSSI = readRSSI();
+  FEI = readFEI();
+  AFC = readAFC();
   //digitalWrite(4, 0);
 }
 
@@ -292,6 +305,9 @@ void RFM69::receiveBegin() {
   ACK_REQUESTED = 0;
   ACK_RECEIVED = 0;
   RSSI = 0;
+  TX_RSSI = 250;
+  FEI = 0;
+  AFC = 0;
   if (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY)
     writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01); //set DIO0 to "PAYLOADREADY" in receive mode
@@ -333,7 +349,7 @@ void RFM69::encrypt(const char* key) {
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFE) | (key ? 1 : 0));
 }
 
-int RFM69::readRSSI(bool forceTrigger) {
+byte RFM69::readRSSI(bool forceTrigger) {
   int rssi = 0;
   if (forceTrigger)
   {
@@ -341,9 +357,21 @@ int RFM69::readRSSI(bool forceTrigger) {
     writeReg(REG_RSSICONFIG, RF_RSSI_START);
     while ((readReg(REG_RSSICONFIG) & RF_RSSI_DONE) == 0x00); // Wait for RSSI_Ready
   }
-  rssi = -readReg(REG_RSSIVALUE);
-  rssi >>= 1;
+  rssi = readReg(REG_RSSIVALUE);
+//  rssi >>= 1;
   return rssi;
+}
+
+short RFM69::readFEI() {
+	short fei = readReg(REG_FEIMSB) << 8;
+	fei |= readReg(REG_FEILSB);
+	return fei;
+}
+
+short RFM69::readAFC() {
+	short afc = readReg(REG_AFCMSB) << 8;
+	afc |= readReg(REG_AFCLSB);
+	return afc;
 }
 
 byte RFM69::readReg(byte addr)
